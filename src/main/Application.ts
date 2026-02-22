@@ -357,6 +357,26 @@ class Application {
     };
   }
 
+  private getMainWindowHandle(): Electron.BrowserWindow | null {
+    return this.mMainWindow?.getHandle() ?? null;
+  }
+
+  private showMessageBox(
+    options: Electron.MessageBoxOptions,
+  ): Promise<Electron.MessageBoxReturnValue> {
+    const handle = this.getMainWindowHandle();
+    return handle !== null
+      ? dialog.showMessageBox(handle, options)
+      : dialog.showMessageBox(options);
+  }
+
+  private showMessageBoxSync(options: Electron.MessageBoxSyncOptions): number {
+    const handle = this.getMainWindowHandle();
+    return handle !== null
+      ? dialog.showMessageBoxSync(handle, options)
+      : dialog.showMessageBoxSync(options);
+  }
+
   private async regularStart(args: IParameters): Promise<void> {
     try {
       await writeFile(this.mStartupLogPath, new Date().toUTCString());
@@ -374,20 +394,17 @@ class Application {
       } else if (err instanceof ProcessCanceled) {
         app.quit();
       } else if (err instanceof DocumentsPathMissing) {
-        const response = await dialog.showMessageBox(
-          this.mMainWindow.getHandle(),
-          {
-            type: "error",
-            buttons: ["Close", "More info"],
-            defaultId: 1,
-            title: "Error",
-            message: "Startup failed",
-            detail:
-              'Your "My Documents" folder is missing or is ' +
-              "misconfigured. Please ensure that the folder is properly " +
-              "configured and accessible, then try again.",
-          },
-        );
+        const response = await this.showMessageBox({
+          type: "error",
+          buttons: ["Close", "More info"],
+          defaultId: 1,
+          title: "Error",
+          message: "Startup failed",
+          detail:
+            'Your "My Documents" folder is missing or is ' +
+            "misconfigured. Please ensure that the folder is properly " +
+            "configured and accessible, then try again.",
+        });
 
         if (response.response === 1) {
           await shell.openExternal(
@@ -453,7 +470,7 @@ class Application {
       if (err instanceof DataInvalid) {
         log("error", "persistence data invalid", getErrorMessageOrDefault(err));
 
-        await dialog.showMessageBox(this.mMainWindow.getHandle(), {
+        await this.showMessageBox({
           type: "error",
           buttons: ["Continue"],
           title: "Error",
@@ -597,11 +614,11 @@ class Application {
 
     log("warn", "running as administrator");
     if ((warnedAdmin ?? 0) > 0) {
-      return;
+          return;
     }
 
     const uacEnabled = this.isUACEnabled();
-    const result = await dialog.showMessageBox(this.mMainWindow.getHandle(), {
+    const result = await this.showMessageBox({
       title: "Admin rights detected",
       message:
         `Vortex has detected that it is being run with administrator rights. It is strongly
@@ -644,7 +661,7 @@ class Application {
     }
 
     if (isMajorDowngrade(lastVersion, currentVersion)) {
-      const res = dialog.showMessageBoxSync(this.mMainWindow.getHandle(), {
+      const res = this.showMessageBoxSync({
         type: "warning",
         title: "Downgrade detected",
         message: `You're using a version of Vortex that is older than the version you ran previously.

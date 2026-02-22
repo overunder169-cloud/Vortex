@@ -139,7 +139,8 @@ export function changeLogPath(newBasePath: string): void {
   const fileTransport = createFileTransport(newBasePath);
 
   logger.remove(winston.transports.File);
-  logger.add(fileTransport);
+  // Winston 2's `add` treats the first arg as a constructor unless `created` is true.
+  (logger as any).add(fileTransport, undefined, true);
 }
 
 function sanitize(message: string): string {

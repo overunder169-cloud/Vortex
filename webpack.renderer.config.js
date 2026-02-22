@@ -37,7 +37,7 @@ module.exports = {
   mode,
   output: {
     libraryTarget: "commonjs2",
-    filename: "../app/[name].js",
+    filename: "../app/renderer/[name].js",
   },
   module: {
     rules: [
