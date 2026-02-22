@@ -2,6 +2,28 @@ import { types, util } from "vortex-api";
 import * as actions from "../actions/installTracking";
 
 // Initial state
+const isDownloadedStatus = (status: types.CollectionModStatus): boolean =>
+  ["downloaded", "downloading", "installed", "installing", "skipped"].includes(
+    status,
+  );
+
+const statusCounterDelta = (
+  oldStatus: types.CollectionModStatus,
+  newStatus: types.CollectionModStatus,
+) => {
+  const downloadedDelta =
+    (isDownloadedStatus(newStatus) ? 1 : 0) -
+    (isDownloadedStatus(oldStatus) ? 1 : 0);
+  const installedDelta =
+    (newStatus === "installed" ? 1 : 0) - (oldStatus === "installed" ? 1 : 0);
+  const failedDelta =
+    (newStatus === "failed" ? 1 : 0) - (oldStatus === "failed" ? 1 : 0);
+  const skippedDelta =
+    (newStatus === "skipped" ? 1 : 0) - (oldStatus === "skipped" ? 1 : 0);
+
+  return { downloadedDelta, installedDelta, failedDelta, skippedDelta };
+};
+
 const initialState: types.ICollectionInstallState = {
   activeSession: undefined,
   lastActiveSessionId: undefined,
@@ -54,42 +76,35 @@ const collectionInstallReducer = {
         return state;
       }
 
+      const currentMod = state.activeSession.mods[payload.ruleId];
+      if (currentMod == null) {
+        return state;
+      }
+
+      const oldStatus = currentMod.status;
+      const newStatus = payload.status as types.CollectionModStatus;
+      if (oldStatus === newStatus) {
+        return state;
+      }
+
       const modPath = ["activeSession", "mods", payload.ruleId];
-      let newState = util.setSafe(
+      const updatedState = util.setSafe(
         state,
         [...modPath, "status"],
-        payload.status,
+        newStatus,
       );
 
-      // Update session counters
-      const mods = newState.activeSession!.mods;
-      const downloadedCount = Object.values(mods).filter((mod) =>
-        [
-          "downloaded",
-          "downloading",
-          "installed",
-          "installing",
-          "skipped",
-        ].includes(mod.status),
-      ).length;
-      const installedCount = Object.values(mods).filter(
-        (mod) => mod.status === "installed",
-      ).length;
-      const failedCount = Object.values(mods).filter(
-        (mod) => mod.status === "failed",
-      ).length;
-      const skippedCount = Object.values(mods).filter(
-        (mod) => mod.status === "skipped",
-      ).length;
+      const { downloadedDelta, installedDelta, failedDelta, skippedDelta } =
+        statusCounterDelta(oldStatus, newStatus);
 
-      newState = util.merge(newState, ["activeSession"], {
-        downloadedCount,
-        installedCount,
-        failedCount,
-        skippedCount,
+      return util.merge(updatedState, ["activeSession"], {
+        downloadedCount:
+          updatedState.activeSession!.downloadedCount + downloadedDelta,
+        installedCount:
+          updatedState.activeSession!.installedCount + installedDelta,
+        failedCount: updatedState.activeSession!.failedCount + failedDelta,
+        skippedCount: updatedState.activeSession!.skippedCount + skippedDelta,
       });
-
-      return newState;
     },
 
     [actions.markModInstalled as any]: (
@@ -103,6 +118,14 @@ const collectionInstallReducer = {
         return state;
       }
 
+      const currentMod = state.activeSession.mods[payload.ruleId];
+      if (currentMod == null) {
+        return state;
+      }
+
+      const oldStatus = currentMod.status;
+      const newStatus: types.CollectionModStatus = "installed";
+
       let newState = util.setSafe(
         state,
         ["activeSession", "mods", payload.ruleId, "modId"],
@@ -111,7 +134,7 @@ const collectionInstallReducer = {
       newState = util.setSafe(
         newState,
         ["activeSession", "mods", payload.ruleId, "status"],
-        "installed",
+        newStatus,
       );
       newState = util.setSafe(
         newState,
@@ -119,32 +142,16 @@ const collectionInstallReducer = {
         Date.now(),
       );
 
-      // Update counters
-      const mods = newState.activeSession!.mods;
-      const downloadedCount = Object.values(mods).filter((mod) =>
-        [
-          "downloaded",
-          "downloading",
-          "installed",
-          "installing",
-          "skipped",
-        ].includes(mod.status),
-      ).length;
-      const installedCount = Object.values(mods).filter(
-        (mod) => mod.status === "installed",
-      ).length;
-      newState = util.setSafe(
-        newState,
-        ["activeSession", "downloadedCount"],
-        downloadedCount,
-      );
-      newState = util.setSafe(
-        newState,
-        ["activeSession", "installedCount"],
-        installedCount,
-      );
+      const { downloadedDelta, installedDelta, failedDelta, skippedDelta } =
+        statusCounterDelta(oldStatus, newStatus);
 
-      return newState;
+      return util.merge(newState, ["activeSession"], {
+        downloadedCount:
+          newState.activeSession!.downloadedCount + downloadedDelta,
+        installedCount: newState.activeSession!.installedCount + installedDelta,
+        failedCount: newState.activeSession!.failedCount + failedDelta,
+        skippedCount: newState.activeSession!.skippedCount + skippedDelta,
+      });
     },
 
     [actions.finishInstallSession as any]: (

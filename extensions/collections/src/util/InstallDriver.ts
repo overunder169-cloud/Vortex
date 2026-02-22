@@ -53,11 +53,50 @@ class InstallDriver {
   private mPrepare: Bluebird<void> = Bluebird.resolve();
   private mTimeStarted: number;
 
+  private static readonly TRACKING_BURST_GUARD = 500;
+  private static readonly PROGRESS_NOTIFICATION_THROTTLE_MS = 300;
+
   private mStateUpdates: any[] = [];
+  private mPendingStatusByRule: Record<string, types.CollectionModStatus> = {};
+  private mPendingStatusActionByRule: Record<string, any> = {};
+  private mPendingInstalledByRule: Record<string, string> = {};
+  private mPendingInstalledActionByRule: Record<string, any> = {};
+  private mLastProgressNotificationAt: number = 0;
+  private mPendingProgressUpdate:
+    | {
+        profile: types.IProfile;
+        gameId: string;
+        collection: types.IMod;
+      }
+    | undefined;
+  private mProgressNotificationTimer: NodeJS.Timeout | undefined;
   private mModStatusDebouncer: util.Debouncer = new util.Debouncer(
     () => {
-      const actions = this.mStateUpdates.slice();
+      const statusActions = Object.entries(this.mPendingStatusActionByRule)
+        .filter(
+          ([ruleId]) =>
+            this.mPendingInstalledActionByRule[ruleId] === undefined,
+        )
+        .map(([, action]) => action);
+      const installedActions = Object.values(
+        this.mPendingInstalledActionByRule,
+      );
+      const trackingActions = statusActions.concat(installedActions);
+
+      if (trackingActions.length > InstallDriver.TRACKING_BURST_GUARD) {
+        log("warn", "high-volume collection tracking batch", {
+          size: trackingActions.length,
+        });
+      }
+
+      const actions = trackingActions.concat(this.mStateUpdates);
+
       this.mStateUpdates = [];
+      this.mPendingStatusByRule = {};
+      this.mPendingStatusActionByRule = {};
+      this.mPendingInstalledByRule = {};
+      this.mPendingInstalledActionByRule = {};
+
       util.batchDispatch(this.mApi.store, actions);
       return Bluebird.resolve();
     },
@@ -91,6 +130,14 @@ class InstallDriver {
     }
 
     const ruleId = util.modRuleId(rule);
+    const pendingInstalled = this.mPendingInstalledByRule[ruleId];
+    if (pendingInstalled !== undefined) {
+      return;
+    }
+    const pendingStatus = this.mPendingStatusByRule[ruleId];
+    if (pendingStatus === status) {
+      return;
+    }
 
     // Check current status to prevent downgrades from terminal states
     const state = this.mApi.getState();
@@ -107,8 +154,11 @@ class InstallDriver {
       return;
     }
 
-    this.mStateUpdates.push(
-      installActions.updateModStatus(this.mCurrentSessionId, ruleId, status),
+    this.mPendingStatusByRule[ruleId] = status;
+    this.mPendingStatusActionByRule[ruleId] = installActions.updateModStatus(
+      this.mCurrentSessionId,
+      ruleId,
+      status,
     );
     this.mModStatusDebouncer.schedule();
   }
@@ -119,9 +169,11 @@ class InstallDriver {
     }
 
     const ruleId = util.modRuleId(rule);
-    this.mStateUpdates.push(
-      installActions.markModInstalled(this.mCurrentSessionId, ruleId, modId),
-    );
+    this.mPendingInstalledByRule[ruleId] = modId;
+    delete this.mPendingStatusByRule[ruleId];
+    delete this.mPendingStatusActionByRule[ruleId];
+    this.mPendingInstalledActionByRule[ruleId] =
+      installActions.markModInstalled(this.mCurrentSessionId, ruleId, modId);
     this.mModStatusDebouncer.schedule();
   }
 
@@ -894,6 +946,12 @@ class InstallDriver {
     // Complete the installation tracking as cancelled/failed
     this.completeInstallationTracking(false);
 
+    if (this.mProgressNotificationTimer !== undefined) {
+      clearTimeout(this.mProgressNotificationTimer);
+      this.mProgressNotificationTimer = undefined;
+    }
+    this.mPendingProgressUpdate = undefined;
+
     this.mCollection = undefined;
     this.mProfile = undefined;
     this.mGameId = undefined;
@@ -1288,23 +1346,11 @@ class InstallDriver {
 
     const downloadProgress = Object.values(mods).reduce((prev, mod) => {
       let size = 0;
-      const isBundled = mod.collectionRule?.extra?.localPath != null;
 
       if (mod.state === "downloaded") {
         // Download complete - use full file size
-        this.updateModTracking(mod.collectionRule, "downloaded");
         size += mod.attributes?.fileSize || 0;
       } else if (mod.state === "downloading" || mod.state == null) {
-        const downloadExists = Object.values(downloads).some((d) => {
-          const lookup = util.lookupFromDownload(d);
-          return util.testModReference(lookup, mod.collectionRule.reference);
-        });
-        // Download in progress - use received bytes or total size
-        if (isBundled || downloadExists) {
-          this.updateModTracking(mod.collectionRule, "downloaded");
-        } else {
-          this.updateModTracking(mod.collectionRule, "downloading");
-        }
         const download = downloads[mod.archiveId];
         size += download?.received || download?.size || 0;
       } else {
@@ -1325,21 +1371,12 @@ class InstallDriver {
     return (dlPerc + instPerc) * 50.0;
   }
 
-  private updateProgress(
+  private emitProgressUpdate(
     profile: types.IProfile,
     gameId: string,
     collection: types.IMod,
   ) {
-    if (collection === undefined) {
-      return;
-    }
-
-    if (this.mTotalSize === undefined) {
-      this.mTotalSize = calculateCollectionSize(
-        this.getModsEx(profile, gameId, collection),
-      );
-    }
-
+    this.mLastProgressNotificationAt = Date.now();
     this.mApi.sendNotification({
       id: INSTALLING_NOTIFICATION_ID + collection.id,
       type: "activity",
@@ -1355,6 +1392,63 @@ class InstallDriver {
         },
       ],
     });
+  }
+
+  private scheduleProgressUpdate() {
+    if (this.mProgressNotificationTimer !== undefined) {
+      return;
+    }
+
+    const elapsed = Date.now() - this.mLastProgressNotificationAt;
+    const delay = Math.max(
+      0,
+      InstallDriver.PROGRESS_NOTIFICATION_THROTTLE_MS - elapsed,
+    );
+
+    this.mProgressNotificationTimer = setTimeout(() => {
+      this.mProgressNotificationTimer = undefined;
+      const pending = this.mPendingProgressUpdate;
+      this.mPendingProgressUpdate = undefined;
+      if (pending === undefined) {
+        return;
+      }
+      if (this.mCollection?.id !== pending.collection?.id) {
+        return;
+      }
+      this.emitProgressUpdate(
+        pending.profile,
+        pending.gameId,
+        pending.collection,
+      );
+    }, delay);
+  }
+
+  private updateProgress(
+    profile: types.IProfile,
+    gameId: string,
+    collection: types.IMod,
+  ) {
+    if (collection === undefined) {
+      return;
+    }
+
+    if (this.mTotalSize === undefined) {
+      this.mTotalSize = calculateCollectionSize(
+        this.getModsEx(profile, gameId, collection),
+      );
+    }
+
+    const elapsed = Date.now() - this.mLastProgressNotificationAt;
+    if (
+      elapsed >= InstallDriver.PROGRESS_NOTIFICATION_THROTTLE_MS &&
+      this.mProgressNotificationTimer === undefined
+    ) {
+      this.emitProgressUpdate(profile, gameId, collection);
+      return;
+    }
+
+    this.mPendingProgressUpdate = { profile, gameId, collection };
+    this.scheduleProgressUpdate();
   }
 }
 
