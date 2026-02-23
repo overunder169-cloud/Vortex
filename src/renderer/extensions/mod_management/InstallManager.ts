@@ -3041,7 +3041,14 @@ class InstallManager {
     const allMods = Object.values(mods);
     const currentPhaseMods = getModsByPhase(allMods, phase);
 
-    const phaseComplete = isCollectionPhaseComplete(api.getState(), phase);
+    const requiredPhaseMods = currentPhaseMods.filter(
+      (mod: any) => mod.type === "requires",
+    );
+    const phaseComplete =
+      requiredPhaseMods.length === 0 ||
+      requiredPhaseMods.every((mod: any) =>
+        ["installed", "failed", "skipped"].includes(mod.status),
+      );
 
     // Only count downloaded mods from the current phase being checked
     const allDownloadedMods = currentPhaseMods.filter(
@@ -3049,15 +3056,8 @@ class InstallManager {
     );
     const downloadedCount = allDownloadedMods.length;
 
-    // Debug: Show status distribution
-    const statusCounts = {};
-    allMods.forEach((mod: any) => {
-      const status = mod.status || "unknown";
-      statusCounts[status] = (statusCounts[status] || 0) + 1;
-    });
-
     // Check if any downloaded mods actually need requeuing (don't have active/pending installations)
-    const downloads = api.getState().persistent.downloads.files;
+    const downloads = state.persistent.downloads.files;
     let modsNeedingRequeue = 0;
 
     const phaseState = this.mInstallPhaseState.get(sourceModId);
@@ -3210,8 +3210,6 @@ class InstallManager {
         return; // Skip this mod
       }
 
-      const downloadState = downloads[downloadId]?.state;
-      log("debug", "Download state check", { downloadId, downloadState });
       if (downloads[downloadId].state === "finished") {
         const hasPendingOrActive = this.hasActiveOrPendingInstallation(
           sourceModId,
@@ -3232,11 +3230,6 @@ class InstallManager {
           : undefined;
         const existingMod = fullReference && findModByRef(fullReference, mods);
 
-        log("debug", "Requeue check", {
-          downloadId,
-          hasPendingOrActive,
-          modId: existingMod?.id,
-        });
         if (!hasPendingOrActive && !existingMod) {
           log("info", "Requeuing download for installation", { downloadId });
           const success = this.handleDownloadFinished(
@@ -3268,15 +3261,10 @@ class InstallManager {
             existingMod.attributes,
           );
         } else {
-          log("debug", "Download already has pending/active installation", {
-            downloadId,
-          });
+          // Already being processed, nothing to do.
         }
       } else {
-        log("debug", "Download not in finished state", {
-          downloadId,
-          state: downloadState,
-        });
+        // Not ready to install yet.
       }
     });
 

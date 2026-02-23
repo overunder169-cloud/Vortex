@@ -54,7 +54,7 @@ class InstallDriver {
   private mTimeStarted: number;
 
   private static readonly TRACKING_BURST_GUARD = 500;
-  private static readonly PROGRESS_NOTIFICATION_THROTTLE_MS = 300;
+  private static readonly PROGRESS_NOTIFICATION_THROTTLE_MS = 500;
 
   private mStateUpdates: any[] = [];
   private mPendingStatusByRule: Record<string, types.CollectionModStatus> = {};
