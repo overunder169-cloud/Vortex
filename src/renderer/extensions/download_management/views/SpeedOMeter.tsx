@@ -20,6 +20,8 @@ interface IConnectedProps {
   downloads: { [downloadId: string]: IDownload };
   speed: number;
   liveActiveDownloads: number;
+  liveActiveWorkers: number;
+  liveMaxWorkers: number;
   liveSpeed: number;
 }
 
@@ -29,13 +31,24 @@ const STATES: DownloadState[] = ["finalizing", "started", "paused"];
 
 class SpeedOMeter extends PureComponentEx<IProps, {}> {
   public render(): JSX.Element {
-    const { t, downloads, slim, speed, liveActiveDownloads, liveSpeed } =
-      this.props;
+    const {
+      t,
+      downloads,
+      slim,
+      speed,
+      liveActiveDownloads,
+      liveActiveWorkers,
+      liveMaxWorkers,
+      liveSpeed,
+    } = this.props;
     const displaySpeed = liveSpeed > 0 ? liveSpeed : speed;
     const activeCount =
       liveActiveDownloads > 0
         ? liveActiveDownloads
         : this.countActiveDownloads(downloads);
+    const maxWorkers = Math.max(1, liveMaxWorkers || 1);
+    const workerCount = Math.max(0, liveActiveWorkers || 0);
+    const workerText = `${workerCount}/${maxWorkers}`;
 
     if (slim) {
       if (activeCount === 0 && displaySpeed === 0) {
@@ -44,7 +57,7 @@ class SpeedOMeter extends PureComponentEx<IProps, {}> {
 
       return (
         <span className="active-downloads-slim">
-          <Icon name="download-speed" /> {activeCount} |{" "}
+          <Icon name="download-speed" /> {activeCount} | {workerText} |{" "}
           {this.toMegaBytesPerSecond(displaySpeed)}
         </span>
       );
@@ -69,9 +82,10 @@ class SpeedOMeter extends PureComponentEx<IProps, {}> {
       <div className="active-downloads-container">
         <span>{t("Active Downloads")}</span>
         <span className="active-downloads-stats">
-          {t("Live: {{count}} active, {{speed}}", {
+          {t("Live: {{count}} active, workers {{workers}}, {{speed}}", {
             replace: {
               count: activeCount > 0 ? activeCount : activeDownloads.length,
+              workers: workerText,
               speed: this.toMegaBytesPerSecond(displaySpeed),
             },
           })}
@@ -128,6 +142,8 @@ function mapStateToProps(state: IState): IConnectedProps {
     downloads: state.persistent.downloads.files,
     speed: state.persistent.downloads.speed || 0,
     liveActiveDownloads: state.persistent.downloads.live?.activeDownloads || 0,
+    liveActiveWorkers: state.persistent.downloads.live?.activeWorkers || 0,
+    liveMaxWorkers: state.persistent.downloads.live?.maxWorkers || 1,
     liveSpeed: state.persistent.downloads.live?.speed || 0,
   };
 }

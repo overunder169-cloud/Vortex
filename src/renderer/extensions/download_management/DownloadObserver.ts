@@ -124,9 +124,15 @@ export class DownloadObserver {
       (downloadId, callback?, options?: IDownloadRemoveOptions) =>
         this.handleRemoveDownload(downloadId, callback, options),
     );
-    events.on("pause-download", (downloadId, callback?) =>
-      this.handlePauseDownload(downloadId, callback),
-    );
+    events.on("pause-download", (downloadId, callbackOrReason?, maybeReason?) => {
+      const callback =
+        typeof callbackOrReason === "function" ? callbackOrReason : undefined;
+      const reason =
+        typeof callbackOrReason === "function"
+          ? maybeReason
+          : callbackOrReason;
+      this.handlePauseDownload(downloadId, callback, reason);
+    });
     events.on("resume-download", (downloadId, callback?, options?) =>
       this.handleResumeDownload(downloadId, callback, options),
     );
@@ -151,21 +157,9 @@ export class DownloadObserver {
     });
 
     api.onStateChange(["persistent", "nexus", "userInfo"], (old, newValue) => {
-      // Pause active downloads only on actual premium status change (not login/logout).
-      // When user logs out, other handlers (e.g., collections) deal with pausing.
-      if (
-        old !== undefined &&
-        newValue !== undefined &&
-        old.isPremium !== newValue.isPremium
-      ) {
-        const state = api.getState();
-        const activeDownloadsList = selectors.queueClearingDownloads(state);
-        Object.keys(activeDownloadsList).forEach((dlId) => {
-          this.handlePauseDownload(dlId);
-        });
-      }
-
-      // Always adjust concurrent downloads limit based on current premium status
+      // Always adjust concurrent downloads limit based on current premium status.
+      // Avoid force-pausing on premium flag refreshes; that can leave collection
+      // workflows stalled until manually resumed.
       const state = api.getState();
       manager.setMaxConcurrentDownloads(
         effectiveDownloadThreads(
@@ -883,11 +877,12 @@ export class DownloadObserver {
   private handlePauseDownload(
     downloadId: string,
     callback?: (error: Error) => void,
+    reason?: any,
   ) {
     const state: IState = this.mApi.store.getState();
     const download = state.persistent.downloads.files[downloadId];
     if (download === undefined) {
-      log("warn", "failed to pause download: unknown", { downloadId });
+      log("warn", "failed to pause download: unknown", { downloadId, reason });
       if (callback !== undefined) {
         callback(new ProcessCanceled("invalid download id"));
       }
@@ -898,6 +893,7 @@ export class DownloadObserver {
       log("debug", "pausing download", {
         id: downloadId,
         oldState: download.state,
+        reason,
       });
       const unfinishedChunks = this.mManager.pause(downloadId);
       if (unfinishedChunks === undefined) {

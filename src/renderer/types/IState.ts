@@ -150,6 +150,8 @@ export interface IStateDownloads {
   speedHistory: number[];
   live?: {
     activeDownloads: number;
+    activeWorkers: number;
+    maxWorkers: number;
     speed: number;
   };
   files: { [id: string]: IDownload };

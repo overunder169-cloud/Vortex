@@ -342,6 +342,7 @@ async function pauseCollection(
   gameId: string,
   modId: string,
   silent?: boolean,
+  reason?: string,
 ) {
   const state = api.getState();
   const mods = state.persistent.mods[gameId];
@@ -351,6 +352,15 @@ async function pauseCollection(
   if (collection === undefined) {
     return;
   }
+
+  const pauseContext = {
+    source: "collections.pauseCollection",
+    reason: reason ?? "unspecified",
+    gameId,
+    modId,
+    at: Date.now(),
+  };
+  log("info", "pauseCollection invoked", pauseContext);
 
   (collection?.rules ?? []).forEach((rule) => {
     // findDownloadByRef has been modified to omit these fields as well, BUT, the vortex-api
@@ -366,10 +376,10 @@ async function pauseCollection(
     ]);
     const dlId = util.findDownloadByRef(cleanReference, downloads);
     if (dlId !== undefined) {
-      api.events.emit("pause-download", dlId);
+      api.events.emit("pause-download", dlId, undefined, pauseContext);
     }
   });
-  await api.emitAndAwait("cancel-dependency-install", modId);
+  await api.emitAndAwait("cancel-dependency-install", modId, pauseContext);
 
   driver.cancel();
 
@@ -447,7 +457,7 @@ async function removeCollection(
 
   modsBeingRemoved.add(makeModKey(gameId, modId));
 
-  await pauseCollection(api, gameId, modId, true);
+  await pauseCollection(api, gameId, modId, true, "remove-collection");
 
   let progress = 0;
   const notiId = shortid();
@@ -1418,7 +1428,7 @@ function once(api: types.IExtensionApi, collectionsCB: () => ICallbackMap) {
           log("info", "User logged out during collection install, pausing", {
             modId,
           });
-          pauseCollection(api, gameId, modId, true)
+          pauseCollection(api, gameId, modId, true, "user-logged-out")
             .then(() => {
               api.sendNotification({
                 type: "warning",

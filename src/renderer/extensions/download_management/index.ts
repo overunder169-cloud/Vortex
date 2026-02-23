@@ -1568,7 +1568,12 @@ function init(context: IExtensionContextExt): boolean {
       liveStatsTimer = setInterval(() => {
         const liveStats = manager.getLiveStats();
         store.dispatch(
-          setLiveDownloadStats(liveStats.activeDownloads, liveStats.speed),
+          setLiveDownloadStats(
+            liveStats.activeDownloads,
+            liveStats.activeWorkers,
+            liveStats.maxWorkers,
+            liveStats.speed,
+          ),
         );
       }, 250);
 

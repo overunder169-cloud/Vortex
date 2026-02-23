@@ -156,6 +156,8 @@ interface ILiveDownloadSample {
 
 interface ILiveDownloadStats {
   activeDownloads: number;
+  activeWorkers: number;
+  maxWorkers: number;
   speed: number;
 }
 
@@ -1259,6 +1261,7 @@ class DownloadManager {
 
   public getLiveStats = (): ILiveDownloadStats => {
     this.updateLiveSpeed();
+    const activeWorkers = Math.max(this.mMaxWorkers - this.getFreeSlots(), 0);
     const activeDownloads = this.mQueue.filter((download) =>
       download.chunks.some(
         (chunk) =>
@@ -1270,6 +1273,8 @@ class DownloadManager {
 
     return {
       activeDownloads,
+      activeWorkers,
+      maxWorkers: this.mMaxWorkers,
       speed: Math.max(0, Math.round(this.mLiveSpeed)),
     };
   };

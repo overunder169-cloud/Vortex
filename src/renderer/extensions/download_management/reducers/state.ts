@@ -212,6 +212,8 @@ export const stateReducer: IReducerSpec = {
     [action.setLiveDownloadStats as any]: (state, payload) =>
       merge(state, ["live"], {
         activeDownloads: payload.activeDownloads,
+        activeWorkers: payload.activeWorkers,
+        maxWorkers: payload.maxWorkers,
         speed: payload.speed,
       }),
     [action.removeDownload as any]: (state, payload) =>
@@ -274,6 +276,8 @@ export const stateReducer: IReducerSpec = {
     speedHistory: [],
     live: {
       activeDownloads: 0,
+      activeWorkers: 0,
+      maxWorkers: 1,
       speed: 0,
     },
     files: {},

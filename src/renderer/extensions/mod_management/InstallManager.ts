@@ -550,6 +550,15 @@ class InstallManager {
   private mInstallers: IModInstaller[] = [];
   private mGetInstallPath: (gameId: string) => string;
   private mDependencyInstalls: { [modId: string]: () => void } = {};
+  private mDependencyInstallTrace: { [modId: string]: string } = {};
+  private mDependencyCancelInfo: {
+    [modId: string]: {
+      source: string;
+      reason?: string;
+      at: number;
+      context?: any;
+    };
+  } = {};
   private mDependencyDownloadsLimit: DynamicDownloadConcurrencyLimiter;
 
   private mNotificationAggregator: NotificationAggregator;
@@ -667,7 +676,21 @@ class InstallManager {
       },
     );
 
-    api.onAsync("cancel-dependency-install", (modId: string) => {
+    api.onAsync("cancel-dependency-install", (modId: string, cancelInfo?: any) => {
+      const normalized = {
+        source:
+          typeof cancelInfo?.source === "string" ? cancelInfo.source : "unknown",
+        reason:
+          typeof cancelInfo?.reason === "string" ? cancelInfo.reason : undefined,
+        at: Date.now(),
+        context: cancelInfo,
+      };
+      this.mDependencyCancelInfo[modId] = normalized;
+      log("info", "cancel-dependency-install requested", {
+        modId,
+        traceId: this.mDependencyInstallTrace[modId],
+        cancel: normalized,
+      });
       this.mDependencyInstalls[modId]?.();
       return Bluebird.resolve();
     });
@@ -2750,7 +2773,11 @@ class InstallManager {
 
         // Check if the dependency installation has been cancelled
         if (!this.mDependencyInstalls[sourceModId]) {
-          log("debug", "Dependency installation cancelled", { sourceModId });
+          log("debug", "Dependency installation cancelled", {
+            sourceModId,
+            traceId: this.mDependencyInstallTrace[sourceModId],
+            cancel: this.mDependencyCancelInfo[sourceModId],
+          });
           return resolve();
         }
 
@@ -2873,7 +2900,11 @@ class InstallManager {
           log(
             "debug",
             "Stopping phase polling - dependency installation cancelled",
-            { sourceModId },
+            {
+              sourceModId,
+              traceId: this.mDependencyInstallTrace[sourceModId],
+              cancel: this.mDependencyCancelInfo[sourceModId],
+            },
           );
           return resolve();
         }
@@ -5986,6 +6017,12 @@ class InstallManager {
         // Clean up phase state and dependency tracking when process is canceled
         delete this.mDependencyInstalls[sourceModId];
         this.cleanupPendingInstalls(sourceModId, true);
+        log("warn", "dependency install ended with ProcessCanceled", {
+          sourceModId,
+          message: err?.message,
+          traceId: this.mDependencyInstallTrace[sourceModId],
+          cancel: this.mDependencyCancelInfo[sourceModId],
+        });
 
         api.showErrorNotification(
           "Failed to install dependencies",
@@ -5995,7 +6032,11 @@ class InstallManager {
         return Bluebird.resolve([]);
       })
       .catch(UserCanceled, () => {
-        log("info", "canceled out of dependency install");
+        log("info", "canceled out of dependency install", {
+          sourceModId,
+          traceId: this.mDependencyInstallTrace[sourceModId],
+          cancel: this.mDependencyCancelInfo[sourceModId],
+        });
         // Cancel all remaining operations when user cancels
         abort.abort();
 
@@ -6027,6 +6068,20 @@ class InstallManager {
     recommended: boolean,
     silent: boolean,
   ): Bluebird<IDependency[]> {
+    if (this.mDependencyInstallTrace[sourceModId] === undefined) {
+      this.mDependencyInstallTrace[sourceModId] =
+        `dep-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    const traceId = this.mDependencyInstallTrace[sourceModId];
+    delete this.mDependencyCancelInfo[sourceModId];
+    log("info", "dependency install session started", {
+      sourceModId,
+      gameId,
+      recommended,
+      dependencyCount: dependencies.length,
+      traceId,
+    });
+
     const state: IState = api.getState();
     let downloads: { [id: string]: IDownload } =
       state.persistent.downloads.files;
@@ -6041,6 +6096,13 @@ class InstallManager {
     let queuedDownloads: IModReference[] = [];
 
     const clearQueued = () => {
+      const cancel = this.mDependencyCancelInfo[sourceModId];
+      log("info", "clearQueued start", {
+        sourceModId,
+        traceId,
+        queuedCount: queuedDownloads.length,
+        cancel,
+      });
       const downloadsNow = api.getState().persistent.downloads.files;
       // cancel in reverse order so that canceling a running download doesn't
       // trigger a previously pending download to start just to then be canceled too.
@@ -6050,6 +6112,9 @@ class InstallManager {
         log("info", "cancel dependency dl", {
           name: renderModReference(ref),
           dlId,
+          sourceModId,
+          traceId,
+          cancel,
         });
         if (dlId !== undefined) {
           api.events.emit("pause-download", dlId);
@@ -6061,6 +6126,11 @@ class InstallManager {
 
       delete this.mDependencyInstalls[sourceModId];
       this.cleanupPendingInstalls(sourceModId, true);
+      log("info", "clearQueued done", {
+        sourceModId,
+        traceId,
+        cancel,
+      });
     };
 
     const queueDownload = (dep: IDependency): Bluebird<string> => {
@@ -6638,6 +6708,11 @@ class InstallManager {
     );
 
     this.mDependencyInstalls[sourceModId] = () => {
+      log("info", "dependency install abort invoked", {
+        sourceModId,
+        traceId: this.mDependencyInstallTrace[sourceModId],
+        cancel: this.mDependencyCancelInfo[sourceModId],
+      });
       abort.abort();
     };
 
@@ -6647,6 +6722,8 @@ class InstallManager {
       })
       .finally(() => {
         this.mInstallPhaseState.delete(sourceModId);
+        delete this.mDependencyInstallTrace[sourceModId];
+        delete this.mDependencyCancelInfo[sourceModId];
       });
   }
 

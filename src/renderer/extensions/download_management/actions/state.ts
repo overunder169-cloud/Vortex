@@ -138,8 +138,10 @@ export const setDownloadSpeeds = createAction(
 
 export const setLiveDownloadStats = createAction(
   "SET_LIVE_DOWNLOAD_STATS",
-  (activeDownloads: number, speed: number) => ({
+  (activeDownloads: number, activeWorkers: number, maxWorkers: number, speed: number) => ({
     activeDownloads,
+    activeWorkers,
+    maxWorkers,
     speed,
   }),
   () => ({ forward: false, scope: "local" }),

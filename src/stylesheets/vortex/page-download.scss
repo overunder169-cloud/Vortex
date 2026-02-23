@@ -41,9 +41,11 @@
     display: flex;
     flex-direction: column;
     padding: 18px;
+    color: $text-color;
 
     span {
         font-size: small;
+        color: inherit;
     }
 
     .active-downloads-stats {
@@ -53,12 +55,17 @@
 
     .progressbar {
         margin: 8px 0px;
+        color: inherit;
 
         .progressbar-labels {
             > *:first-child {
                 width: 0;
             }
         }
+    }
+
+    a {
+        color: $brand-clickable;
     }
 }
 
