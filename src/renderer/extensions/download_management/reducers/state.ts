@@ -209,6 +209,11 @@ export const stateReducer: IReducerSpec = {
       const temp = setSafe(state, ["speed"], payload[payload.length - 1]);
       return setSafe(temp, ["speedHistory"], payload);
     },
+    [action.setLiveDownloadStats as any]: (state, payload) =>
+      merge(state, ["live"], {
+        activeDownloads: payload.activeDownloads,
+        speed: payload.speed,
+      }),
     [action.removeDownload as any]: (state, payload) =>
       deleteOrNop(state, ["files", payload.id]),
     [action.removeDownloadSilent as any]: (state, payload) =>
@@ -267,6 +272,10 @@ export const stateReducer: IReducerSpec = {
   defaults: {
     speed: 0,
     speedHistory: [],
+    live: {
+      activeDownloads: 0,
+      speed: 0,
+    },
     files: {},
   },
   verifiers: {

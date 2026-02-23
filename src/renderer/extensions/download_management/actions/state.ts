@@ -136,6 +136,15 @@ export const setDownloadSpeeds = createAction(
   (speeds) => speeds,
 );
 
+export const setLiveDownloadStats = createAction(
+  "SET_LIVE_DOWNLOAD_STATS",
+  (activeDownloads: number, speed: number) => ({
+    activeDownloads,
+    speed,
+  }),
+  () => ({ forward: false, scope: "local" }),
+);
+
 /**
  * add a file that has been found on disk but where we weren't involved
  * in the download.

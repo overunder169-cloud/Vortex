@@ -149,6 +149,16 @@ interface IRunningDownload {
   failedCB: (err) => void;
 }
 
+interface ILiveDownloadSample {
+  ts: number;
+  bytes: number;
+}
+
+interface ILiveDownloadStats {
+  activeDownloads: number;
+  speed: number;
+}
+
 type FinishCallback = (paused: boolean, replaceFileName?: string) => void;
 
 /**
@@ -1140,6 +1150,8 @@ class DownloadManager {
   private mThrottle: () => stream.Transform;
   private mHttpAgent: http.Agent;
   private mHttpsAgent: https.Agent;
+  private mLiveSamples: ILiveDownloadSample[] = [];
+  private mLiveSpeed: number = 0;
 
   /**
    * Creates an instance of DownloadManager.
@@ -1193,6 +1205,7 @@ class DownloadManager {
       }
     };
     setInterval(() => this.tickQueue(false), 200);
+    setInterval(() => this.updateLiveSpeed(), 250);
     this.mSpeedCalculator = new SpeedCalculator(5, speedCalcCB);
     this.mProtocolHandlers = protocolHandlers;
     this.mThrottle = () => makeThrottle(maxBandwidth);
@@ -1226,7 +1239,11 @@ class DownloadManager {
   }
 
   public setMaxConcurrentDownloads = (maxConcurrent: number) => {
-    this.mMaxWorkers = maxConcurrent;
+    this.mMaxWorkers = Math.max(1, Math.floor(maxConcurrent));
+    this.mHttpAgent.maxSockets = this.mMaxWorkers * 2;
+    this.mHttpAgent.maxFreeSockets = this.mMaxWorkers;
+    this.mHttpsAgent.maxSockets = this.mMaxWorkers * 2;
+    this.mHttpsAgent.maxFreeSockets = this.mMaxWorkers;
   };
 
   public getFreeSlots = (): number => {
@@ -1238,6 +1255,23 @@ class DownloadManager {
       );
     }, 0);
     return Math.max(this.mMaxWorkers - busyCount, 0);
+  };
+
+  public getLiveStats = (): ILiveDownloadStats => {
+    this.updateLiveSpeed();
+    const activeDownloads = this.mQueue.filter((download) =>
+      download.chunks.some(
+        (chunk) =>
+          chunk.state === "init" ||
+          chunk.state === "running" ||
+          (chunk.state === "paused" && chunk.size > 0),
+      ),
+    ).length;
+
+    return {
+      activeDownloads,
+      speed: Math.max(0, Math.round(this.mLiveSpeed)),
+    };
   };
 
   /**
@@ -1921,6 +1955,7 @@ class DownloadManager {
 
   private makeProgressCB = (job: IDownloadJob, download: IRunningDownload) => {
     return (bytes) => {
+      this.trackLiveSample(bytes);
       const starving = this.mSpeedCalculator.addMeasure(job.workerId, bytes);
       if (starving) {
         this.mSlowWorkers[job.workerId] =
@@ -1953,6 +1988,33 @@ class DownloadManager {
       }
     };
   };
+
+  private trackLiveSample(bytes: number) {
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+      return;
+    }
+
+    const now = Date.now();
+    this.mLiveSamples.push({ ts: now, bytes });
+    this.pruneLiveSamples(now);
+  }
+
+  private pruneLiveSamples(now: number) {
+    const cutoff = now - 2000;
+    while (this.mLiveSamples.length > 0 && this.mLiveSamples[0].ts < cutoff) {
+      this.mLiveSamples.shift();
+    }
+  }
+
+  private updateLiveSpeed() {
+    const now = Date.now();
+    this.pruneLiveSamples(now);
+    const totalBytes = this.mLiveSamples.reduce(
+      (total, sample) => total + sample.bytes,
+      0,
+    );
+    this.mLiveSpeed = totalBytes / 2;
+  }
 
   private shouldRestartSlowWorker(
     workerId: number,

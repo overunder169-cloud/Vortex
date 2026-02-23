@@ -61,6 +61,7 @@ import {
   DOWNLOADS_DIR_TAG,
   writeDownloadsTag,
 } from "../util/downloadDirectory";
+import { PREMIUM_DOWNLOAD_THREADS_MAX } from "../util/parallelDownloads";
 import getDownloadPath, {
   getDownloadPathPattern,
 } from "../util/getDownloadPath";
@@ -261,7 +262,7 @@ class Settings extends ComponentEx<IProps, IComponentState> {
               type="range"
               value={parallelDownloads}
               min={1}
-              max={10}
+              max={PREMIUM_DOWNLOAD_THREADS_MAX}
               onChange={this.onChangeParallelDownloads}
               disabled={!isPremium}
             />
@@ -277,7 +278,7 @@ class Settings extends ComponentEx<IProps, IComponentState> {
               <p>
                 {t(
                   "Regular users are restricted to 1 download thread - " +
-                    "Go Premium for up to 10 download threads!",
+                    "Go Premium for up to 16 download threads!",
                 )}
               </p>
             ) : null}
@@ -468,7 +469,7 @@ class Settings extends ComponentEx<IProps, IComponentState> {
 
   private onChangeParallelDownloads = (evt) => {
     const { onSetMaxDownloads } = this.props;
-    onSetMaxDownloads(evt.currentTarget.value);
+    onSetMaxDownloads(parseInt(evt.currentTarget.value, 10));
   };
 
   private apply = (normalize: (input: string) => string) => {

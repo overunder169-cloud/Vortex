@@ -148,6 +148,10 @@ export interface ITableStates {
 export interface IStateDownloads {
   speed: number;
   speedHistory: number[];
+  live?: {
+    activeDownloads: number;
+    speed: number;
+  };
   files: { [id: string]: IDownload };
 }
 

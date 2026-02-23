@@ -52,6 +52,7 @@ import {
   setDownloadHash,
   setDownloadHashByFile,
   setDownloadInterrupted,
+  setLiveDownloadStats,
   setDownloadModInfo,
   setDownloadSpeed,
   setDownloadSpeeds,
@@ -65,6 +66,7 @@ import { ensureDownloadsDirectory } from "./util/downloadDirectory";
 import extendAPI from "./util/extendApi";
 import getDownloadGames from "./util/getDownloadGames";
 import { finalizeDownload } from "./util/postprocessDownload";
+import { effectiveDownloadThreads } from "./util/parallelDownloads";
 import queryInfo from "./util/queryDLInfo";
 import setDownloadGames from "./util/setDownloadGames";
 import DownloadView from "./views/DownloadView";
@@ -1473,6 +1475,7 @@ function init(context: IExtensionContextExt): boolean {
     {
       let powerTimer: NodeJS.Timeout;
       let powerBlockerId: number;
+      let liveStatsTimer: NodeJS.Timeout;
       const stopTimer = async () => {
         if (powerBlockerId !== undefined) {
           const isStarted =
@@ -1500,7 +1503,12 @@ function init(context: IExtensionContextExt): boolean {
 
       const maxWorkersDebouncer = new Debouncer(
         (newValue: number) => {
-          manager.setMaxConcurrentDownloads(newValue);
+          const state = store.getState();
+          const isPremium =
+            state.persistent["nexus"]?.userInfo?.isPremium === true;
+          manager.setMaxConcurrentDownloads(
+            effectiveDownloadThreads(newValue, isPremium),
+          );
           return null;
         },
         500,
@@ -1516,10 +1524,10 @@ function init(context: IExtensionContextExt): boolean {
 
       const state = context.api.getState();
 
-      const maxParallelDownloads =
-        state.persistent["nexus"]?.userInfo?.isPremium === true
-          ? state.settings.downloads.maxParallelDownloads
-          : 1;
+      const maxParallelDownloads = effectiveDownloadThreads(
+        state.settings.downloads.maxParallelDownloads,
+        state.persistent["nexus"]?.userInfo?.isPremium === true,
+      );
 
       manager = new DownloadManagerImpl(
         context.api,
@@ -1553,6 +1561,17 @@ function init(context: IExtensionContextExt): boolean {
         protocolHandlers,
         () => context.api.getState().settings.downloads.maxBandwidth * 8,
       );
+
+      if (liveStatsTimer !== undefined) {
+        clearInterval(liveStatsTimer);
+      }
+      liveStatsTimer = setInterval(() => {
+        const liveStats = manager.getLiveStats();
+        store.dispatch(
+          setLiveDownloadStats(liveStats.activeDownloads, liveStats.speed),
+        );
+      }, 250);
+
       manager.setFileExistsCB((fileName) => {
         return context.api
           .showDialog(

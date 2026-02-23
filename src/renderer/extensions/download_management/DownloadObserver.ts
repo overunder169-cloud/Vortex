@@ -56,6 +56,7 @@ import {
 } from "./actions/state";
 import { AlreadyDownloaded, DownloadIsHTML } from "./DownloadManager";
 import { ensureDownloadsDirectory } from "./util/downloadDirectory";
+import { effectiveDownloadThreads } from "./util/parallelDownloads";
 import getDownloadGames from "./util/getDownloadGames";
 import { finalizeDownload } from "./util/postprocessDownload";
 
@@ -165,7 +166,13 @@ export class DownloadObserver {
       }
 
       // Always adjust concurrent downloads limit based on current premium status
-      manager.setMaxConcurrentDownloads(newValue?.isPremium === true ? 10 : 1);
+      const state = api.getState();
+      manager.setMaxConcurrentDownloads(
+        effectiveDownloadThreads(
+          state.settings.downloads.maxParallelDownloads,
+          newValue?.isPremium === true,
+        ),
+      );
     });
   }
 
